@@ -47,11 +47,25 @@ public:
 };
 
 int main() {
-    ThreadPool tp{4};
+    int items = 5'000'000;
+    std::vector<uint8_t> validation_array(items, 0);
 
-    for (int i = 0; i < 20000; i++) {
-        tp.enque_job([i]() {
-            std::cout << "Job " << i << std::endl;
-        });
+    {
+        ThreadPool tp{4};
+
+        for (int i = 0; i < items; i++) {
+            tp.enque_job([i, &validation_array]() {
+                validation_array[i] = 1;
+            });
+        }
     }
+
+    int missing = 0;
+    for (int i = 0; i < items; i++) {
+        if (validation_array[i] == 0) {
+            missing++;
+        }
+    }
+
+    std::cout << "Lost " << missing << " Elements in 5 million push and pops" << std::endl;
 }

@@ -1,14 +1,13 @@
 #include <iostream>
 #include <vector>
 #include <functional>
+#include <semaphore>
 #include "thread_safe_queue.h"
-
-using namespace std;
 
 class ThreadPool {
 private:
-    ThreadSafeQueue<function<void()>> tsq;
-    std::atomic<int> jobs{0};
+    ThreadSafeQueue<std::function<void()>> tsq;
+    std::counting_semaphore<> jobs{0};
     std::vector<std::thread> threads;
     std::atomic<bool> stop_signal{false};
 public:
@@ -17,30 +16,31 @@ public:
             threads.push_back(std::thread{
                 [this]() {
                     while (true) {
-                        jobs.wait(0);
-                        function<void()> fn;
-                        if (tsq.pop(fn)) {
-                            jobs--;
-                            fn();
-                        } else if (tsq.len == 0 && stop_signal) {
-                            break;
+                        jobs.acquire();
+                        std::function<void()> fn;
+                        while (!tsq.pop(fn)) { 
+                            if (tsq.len == 0 && stop_signal) {
+                                return;
+                            }
+                            std::this_thread::yield();
                         }
+                        fn();
                     }
                 }
             });
         }
     }
 
-    void enque_job(function<void()> fn) {
-        while (!tsq.push(fn)) { this_thread::yield(); }
-        jobs++;
-        jobs.notify_one();
+    void enque_job(std::function<void()> fn) {
+        if (stop_signal) return;
+        while (!tsq.push(fn)) { std::this_thread::yield(); }
+        jobs.release();
     }
 
     ~ThreadPool() {
-        jobs++;
         stop_signal.store(true);
-        for (thread& t: threads) {
+        jobs.release(threads.size());
+        for (std::thread& t: threads) {
             t.join();
         }
     }
@@ -51,7 +51,7 @@ int main() {
 
     for (int i = 0; i < 20000; i++) {
         tp.enque_job([i]() {
-            cout << "Job " << i << endl;
+            std::cout << "Job " << i << std::endl;
         });
     }
 }

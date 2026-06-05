@@ -1,47 +1,57 @@
 #include <iostream>
 #include <vector>
+#include <functional>
 #include "thread_safe_queue.h"
 
+using namespace std;
+
+class ThreadPool {
+private:
+    ThreadSafeQueue<function<void()>> tsq;
+    std::atomic<int> jobs{0};
+    std::vector<std::thread> threads;
+    std::atomic<bool> stop_signal{false};
+public:
+    ThreadPool(int num_threads): tsq{128} {
+        for (int i = 0; i < num_threads; i++) {
+            threads.push_back(std::thread{
+                [this]() {
+                    while (true) {
+                        jobs.wait(0);
+                        function<void()> fn;
+                        if (tsq.pop(fn)) {
+                            jobs--;
+                            fn();
+                        } else if (tsq.len == 0 && stop_signal) {
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    void enque_job(function<void()> fn) {
+        while (!tsq.push(fn)) { this_thread::yield(); }
+        jobs++;
+        jobs.notify_one();
+    }
+
+    ~ThreadPool() {
+        jobs++;
+        stop_signal.store(true);
+        for (thread& t: threads) {
+            t.join();
+        }
+    }
+};
+
 int main() {
-    ThreadSafeQueue<int> tsq{2};
-    int t = 32;
-    int k = 1000;
-    vector<bool> completed(k, false);
-    vector<thread> tasks;
-    
-    for (int i = 0; i < t; i++) {
-        tasks.push_back(thread{
-            [i, &tsq, t, k]() {
-                for (int q = i; q < k; q += t) {
-                    while (!tsq.push(q)) {
-                        this_thread::yield();
-                    }
-                    // cout << "Pushed " << i + 1 << endl;
-                }
-            }
+    ThreadPool tp{4};
+
+    for (int i = 0; i < 20000; i++) {
+        tp.enque_job([i]() {
+            cout << "Job " << i << endl;
         });
-    }
-
-    for (int i = 0; i < t; i++) {
-        tasks.push_back(thread{
-            [&, i, t]() {
-                for (int q_ = i; q_ < k; q_ += t) {
-                    int q = 0;
-                    while (!tsq.pop(q)) {
-                        this_thread::yield();
-                    }
-                    completed[q] = true;
-                    // cout << "Popped " << q << endl;
-                }
-            }
-        });
-    }
-
-    for (thread& task: tasks) {
-        task.join();
-    }
-
-    for (int i = 0; i < k; i++) {
-        cout << "Completed " << i << ": " << completed[i] << endl;
     }
 }

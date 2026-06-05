@@ -4,7 +4,7 @@
 template <typename T>
 class ThreadSafeQueue {
 private:
-    struct DataSlot {
+    struct alignas(64) DataSlot {
         std::atomic<size_t> expected_assignment{0};
         T data;
     };
